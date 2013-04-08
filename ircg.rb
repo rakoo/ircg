@@ -103,7 +103,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
       muc_client = Jabber::MUC::SimpleMUCClient.new @client
       muc_client.on_message do |time, nick, text|
-        post server_name, PRIVMSG, nick, message unless nick == @nick.downcase
+        chan, prefix, _ = jabber_presence_to_irc muc_client.roster[nick]
+        post prefix, PRIVMSG, chan, text unless nick == @nick.downcase
       end
       muc_client.on_room_message do |time, text|
         @log.debug text
