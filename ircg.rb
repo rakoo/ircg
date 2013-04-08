@@ -97,8 +97,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
       real_jid = Jabber::JID.new chan_name.sub(/^#/, ''), AUTHORIZED_CONFERENCE_DOMAIN, @nick
 
-      if @muc_clients[real_jid]
-        return @muc_clients[real_jid]
+      if @muc_clients[real_jid.node]
+        return @muc_clients[real_jid.node]
       end
 
       muc_client = Jabber::MUC::SimpleMUCClient.new @client
@@ -129,7 +129,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
       post server_name, RPL_NAMREPLY, @nick, "=", chan_name, irc_nicks_and_roles.join(" ").strip
       post server_name, RPL_ENDOFNAMES, @nick, chan_name, "End of /NAMES list"
 
-      @muc_clients[real_jid] = muc_client
+      @muc_clients[real_jid.node] = muc_client
     end
 	end
 
@@ -200,30 +200,15 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 	end
 
 	def on_privmsg(m)
-		while (Time.now.to_i - @updated_on < 2)
-			sleep 2
-		end
-		idle_update
+    target, message = *m.params
+    target.sub!(/^#/, '')
 
-		return on_ctcp(m[0], ctcp_decoding(m[1])) if m.ctcp?
-
-		target, message = *m.params
-		t = target.downcase
-
-		case
-		when @@channels.key?(t)
-			if @@channels[t][:users].key?(@nick.downcase)
-				@@channels[t][:users].each do |nick, m|
-					post @@users[nick][:socket], @prefix, PRIVMSG, @@channels[t][:alias], message unless nick == @nick.downcase
-				end
-			else
-				post @socket, nil, ERR_CANNOTSENDTOCHAN, @nick, target, "Cannot send to channel"
-			end
-		when @@users.key?(t)
-			post @@users[nick][:socket], @prefix, PRIVMSG, @@users[t][:nick], message
-		else
-			post @socket, nil, ERR_NOSUCHNICK, @nick, target, "No such nick/channel"
-		end
+    if @muc_clients.keys.include? target
+      muc_client = @muc_clients[target]
+      muc_client.say message
+    else
+			post server_name, ERR_NOSUCHNICK, @nick, target, "No such nick/channel"
+    end
 	end
 
 	def on_ping(m)
