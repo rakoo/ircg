@@ -6,6 +6,9 @@ require 'net/irc'
 require 'xmpp4r'
 require 'xmpp4r/muc'
 
+ANON_PROVIDER = 'anon.otokar.looc2011.eu'
+AUTHORIZED_CONFERENCE_DOMAIN = 'conference.otokar.looc2011.eu'
+
 class NetIrcGatewayServer < Net::IRC::Server::Session
 	def server_name
 		"irc-gateway"
@@ -33,6 +36,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
 	def initialize(*args)
 		super
+    @muc_clients = {}
 	end
 
 	def on_pass(m)
@@ -46,63 +50,87 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
     ## Only one nick for all the rooms for the moment
     ## TODO: one nick per room
-    anon_jid = Jabber::JID.new("anon.otokar.looc2011.eu")
-    client = Jabber::Client.new anon_jid
-    client.connect
-    client.auth_anonymous
+    anon_jid = Jabber::JID.new ANON_PROVIDER
+    @client = Jabber::Client.new anon_jid
+    @client.connect
+    @client.auth_anonymous
 
-    @muc_client = Jabber::MUC::SimpleMUCClient.new client
-    @muc_client.on_message do |time, nick, text|
-      post nil, PRIVMSG, nick, message unless nick == @nick.downcase
-    end
 
     post @prefix, NICK, @nick
+
     initial_message
+    start_ping
 	end
 
   def on_nick(m)
     @nick = m.params[0]
-    @muc_client.nick = @nick if @muc_client
+
+    @muc_clients.each do |room, client|
+      client.nick = @nick if client
+    end
   end
 
 	def on_join(m)
-#		channels = m.params[0].split(/\s*,\s*/)
-#		password = m.params[1]
-#
-#		channels.each do |channel|
-#			unless channel.downcase =~ /^#/
-#				post @socket, server_name, ERR_NOSUCHCHANNEL, @nick, channel, "No such channel"
-#				next
-#			end
-#
-#			unless @@channels.key?(channel.downcase)
-#				channel_create(channel)
-#			else
-#				return if @@channels[channel.downcase][:users].key?(@nick.downcase)
-#
-#				@@channels[channel.downcase][:users][@nick.downcase] = []
-#			end
-#
-#			mode = @@channels[channel.downcase][:mode].empty? ? "" : "+" + @@channels[channel.downcase][:mode]
-#			post @socket, server_name, RPL_CHANNELMODEIS, @nick, @@channels[channel.downcase][:alias], mode
-#
-#			channel_users = ""
-#			@@channels[channel.downcase][:users].each do |nick, m|
-#				post @@users[nick][:socket], @prefix, JOIN, @@channels[channel.downcase][:alias]
-#
-#				case
-#				when m.index("@")
-#					f = "@"
-#				when m.index("+")
-#					f = "+"
-#				else
-#					f = ""
-#				end
-#				channel_users += "#{f}#{@@users[nick.downcase][:nick]} "
-#			end
-#			post @socket, server_name, RPL_NAMREPLY, @@users[nick][:nick], "=", @@channels[channel.downcase][:alias], "#{channel_users.strip}"
-#			post @socket, server_name, RPL_ENDOFNAMES, @@users[nick][:nick], @@channels[channel.downcase][:alias], "End of /NAMES list"
-#		end
+		channels = m.params[0].split(/\s*,\s*/)
+    channels.each do |channel|
+
+      jided = Jabber::JID.new channel
+
+      # If channel is #chan@domain.tld, jided.node is #chan and
+      # jided.domain is domain.tld.
+      #
+      # If channel is #chan, jided.node is None and jided.domain is
+      # #chan
+
+      if jided.node
+
+        if jided.domain != AUTHORIZED_CONFERENCE_DOMAIN
+          @log.debug "; Trying to join #{jided.domain}, forbidden"
+          post server_name, ERR_NOSUCHCHANNEL, @nick, channel, "No such channel"
+          return true
+        end
+
+        chan_name = jided.node
+      else
+        chan_name = jided.domain
+      end
+
+      real_jid = Jabber::JID.new chan_name.sub(/^#/, ''), AUTHORIZED_CONFERENCE_DOMAIN, @nick
+
+      if @muc_clients[real_jid]
+        return @muc_clients[real_jid]
+      end
+
+      muc_client = Jabber::MUC::SimpleMUCClient.new @client
+      muc_client.on_message do |time, nick, text|
+        post server_name, PRIVMSG, nick, message unless nick == @nick.downcase
+      end
+      muc_client.on_room_message do |time, text|
+        @log.debug text
+      end
+
+      ## Add join callback
+      muc_client.add_join_callback(1) do |presence|
+        chan, prefix = jabber_presence_to_irc presence
+        post prefix, JOIN, chan
+      end
+
+      muc_client.join(real_jid)
+
+      # join success !
+      irc_nicks_and_roles = []
+      muc_client.roster.each do |nick, presence|
+        chan, prefix, irc_nick_and_role = jabber_presence_to_irc presence
+        irc_nicks_and_roles << irc_nick_and_role
+
+        post prefix, JOIN, chan if nick == @nick
+      end
+
+      post server_name, RPL_NAMREPLY, @nick, "=", chan_name, irc_nicks_and_roles.join(" ").strip
+      post server_name, RPL_ENDOFNAMES, @nick, chan_name, "End of /NAMES list"
+
+      @muc_clients[real_jid] = muc_client
+    end
 	end
 
 	def on_part(m)
@@ -199,7 +227,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 	end
 
 	def on_ping(m)
-		post @socket, server_name, PONG, m.params[0]
+		post server_name, PONG, m.params[0]
 	end
 
 	def on_pong(m)
@@ -237,22 +265,13 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 		@@channels.delete(channel.downcase)
 	end
 
-#	def post(socket, prefix, command, *params)
-#		m = Message.new(prefix, command, params.map{|s|
-#			s.gsub(/[\r\n]/, "")
-#		})
-#		socket << m
-#	rescue
-#		finish
-#	end
-
 	def start_ping
 		Thread.start do
 			loop do
 				@ping = false
 				time = Time.now.to_i
 				if @ping == false && (time - @updated_on > 60)
-					post @socket, server_name, PING, @prefix
+					post server_name, PING, @prefix
 					loop do
 						sleep 1
 						if @ping
@@ -277,6 +296,31 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 		post server_name, RPL_CREATED,  @nick, "This server was created #{Time.now}"
 		post server_name, RPL_MYINFO,   @nick, "#{server_name} #{server_version} #{available_user_modes} #{available_channel_modes}"
 	end
+
+  private
+
+  def jabber_presence_to_irc presence
+    x = presence.get_elements('x').first
+    if x.kind_of? Jabber::MUC::XMUCUser
+      item = x.items.first
+
+      # in most cases, item.role is 'moderator' or 'participant'
+      irc_role = item.role == 'moderator' ? '@' : ''
+
+      # We try to get the participants' jid. If the room is
+      # semy-anonymous, it isn absent; fall back to the room's jid
+      participant_jid = Jabber::JID.new(item.jid ? item.jid : presence.from).strip
+    end
+
+    room_jid = Jabber::JID.new presence.from
+    irc_nick = room_jid.resource
+    irc_nick_and_role = "#{irc_role}#{irc_nick}"
+
+    chan = "##{room_jid.node}" # Only public chans for the moment
+    prefix = "#{irc_nick}!#{participant_jid}"
+
+    [chan || "", prefix || "", irc_nick_and_role]
+  end
 
 end
 
