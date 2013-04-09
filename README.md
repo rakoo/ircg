@@ -27,11 +27,10 @@ shared status (nick, state, participants...) is managed by the MUC;
 there is no logic in ircg.
 
 Because we need to create Jabber clients on-the-fly, they are anonymous
-clients, as fer defined in XEP-0175
-(http://xmpp.org/extensions/xep-0175.html). As such, they shouldn't have
-more privilege than participant (if they were moderator, and the client
-disconnected, we would have a stall, dead moderator waiting in the
-room).
+clients, as per defined in XEP-0175 (http://xmpp.org/extensions/xep-0175.html).
+As such, they shouldn't have more privilege than participant (if they
+were moderator, and the client disconnected, we would have a stall,
+dead moderator waiting in the room).
 
 As a consequence of this, IRC clients cannot connect to anything but
 the domain they are in. I am running an "anonymous node" on
