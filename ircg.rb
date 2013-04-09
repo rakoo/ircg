@@ -6,6 +6,8 @@ require 'net/irc'
 require 'xmpp4r'
 require 'xmpp4r/muc'
 
+require 'set'
+
 ANON_PROVIDER = 'anon.otokar.looc2011.eu'
 AUTHORIZED_CONFERENCE_DOMAIN = 'conference.otokar.looc2011.eu'
 
@@ -36,7 +38,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
 	def initialize(*args)
 		super
-    @muc_clients = {}
+    @muc_objects = {}
 	end
 
 	def on_pass(m)
@@ -69,10 +71,10 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     old_prefix = @prefix
     @prefix = Prefix.new "#{@nick}!#{@prefix.user}@#{@prefix.host}"
 
-    if @muc_clients.empty?
+    if @muc_objects.empty?
       post old_prefix, NICK, @nick
     else
-      @muc_clients.each do |room, client|
+      @muc_objects.each do |room, client|
         client.nick = @nick if client
       end
     end
@@ -105,24 +107,61 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
       real_jid = Jabber::JID.new chan_name.sub(/^#/, ''), AUTHORIZED_CONFERENCE_DOMAIN, @nick
 
-      if @muc_clients[real_jid.node]
-        return @muc_clients[real_jid.node]
+      if @muc_objects[chan_name]
+        return @muc_objects[chan_name][:muc_client]
+      else
+        @muc_objects[chan_name] = {}
       end
+
+      @muc_objects[chan_name][:fake_joins] = Set.new
 
       muc_client = Jabber::MUC::SimpleMUCClient.new @client
       muc_client.on_message do |time, nick, text|
         chan, prefix, _ = jabber_presence_to_irc muc_client.roster[nick]
         post prefix, PRIVMSG, chan, text unless nick == @nick.downcase
+        false
       end
       muc_client.on_room_message do |time, text|
         @log.debug text
       end
 
-      ## Add join callback
-      muc_client.add_join_callback(1) do |presence|
-        chan, prefix = jabber_presence_to_irc presence
-        post prefix, JOIN, chan
+      ## Add leave callback
+      muc_client.add_leave_callback(50) do |presence|
+        _ , prefix, _ = jabber_presence_to_irc presence
+
+        if presence.x(Jabber::MUC::XMUCUser)
+          if presence.x.status_code == 303
+            # Not a real leave, just a nick change.
+            old_jid = Jabber::JID.new presence.from
+            old_prefix = "#{old_jid.resource}!#{old_jid.strip}"
+            new_nick = presence.x(Jabber::MUC::XMUCUser).items.first.nick
+
+            post old_prefix, NICK, new_nick
+
+            # Make sure the next presence isn't treated as a join
+            new_jid = old_jid
+            new_jid.resource = new_nick
+
+            @muc_objects[chan_name][:fake_joins] << new_jid
+          end
+        end
+
+        false
       end
+
+      ## Add join callback
+      muc_client.add_join_callback(50) do |presence|
+        jid = Jabber::JID.new presence.from
+        if @muc_objects[chan_name][:fake_joins].include? jid
+          @muc_objects[chan_name][:fake_joins].delete jid
+        else
+          chan, prefix, _ = jabber_presence_to_irc presence
+          post prefix, JOIN, chan
+        end
+
+        false
+      end
+
 
       muc_client.join(real_jid)
 
@@ -138,7 +177,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
       post server_name, RPL_NAMREPLY, @nick, "=", chan_name, irc_nicks_and_roles.join(" ").strip
       post server_name, RPL_ENDOFNAMES, @nick, chan_name, "End of /NAMES list"
 
-      @muc_clients[real_jid.node] = muc_client
+      @muc_objects[chan_name][:muc_client] = muc_client
     end
 	end
 
@@ -212,8 +251,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     target, message = *m.params
     target.sub!(/^#/, '')
 
-    if @muc_clients.keys.include? target
-      muc_client = @muc_clients[target]
+    if @muc_objects.keys.include? target
+      muc_client = @muc_objects[target]
       muc_client.say message
     else
 			post server_name, ERR_NOSUCHNICK, @nick, target, "No such nick/channel"
@@ -294,9 +333,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
   private
 
   def jabber_presence_to_irc presence
-    x = presence.get_elements('x').first
-    if x.kind_of? Jabber::MUC::XMUCUser
-      item = x.items.first
+    if presence.x(Jabber::MUC::XMUCUser) and item = presence.x(Jabber::MUC::XMUCUser).items.first
 
       # in most cases, item.role is 'moderator' or 'participant'
       irc_role = item.role == 'moderator' ? '@' : ''
