@@ -55,7 +55,6 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     @client.connect
     @client.auth_anonymous
 
-
     post @prefix, NICK, @nick
 
     initial_message
@@ -65,8 +64,17 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
   def on_nick(m)
     @nick = m.params[0]
 
-    @muc_clients.each do |room, client|
-      client.nick = @nick if client
+    return unless @prefix # We have a prefix if we've gone through on_user
+
+    old_prefix = @prefix
+    @prefix = Prefix.new "#{@nick}!#{@prefix.user}@#{@prefix.host}"
+
+    if @muc_clients.empty?
+      post old_prefix, NICK, @nick
+    else
+      @muc_clients.each do |room, client|
+        client.nick = @nick if client
+      end
     end
   end
 
