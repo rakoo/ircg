@@ -74,8 +74,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     if @muc_objects.empty?
       post old_prefix, NICK, @nick
     else
-      @muc_objects.each do |room, client|
-        client.nick = @nick if client
+      @muc_objects.each do |room, objects|
+        objects[:muc_client].nick = @nick if objects[:muc_client]
       end
     end
   end
@@ -108,7 +108,7 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
       real_jid = Jabber::JID.new chan_name.sub(/^#/, ''), AUTHORIZED_CONFERENCE_DOMAIN, @nick
 
       if @muc_objects[chan_name]
-        return @muc_objects[chan_name][:muc_client]
+        return
       else
         @muc_objects[chan_name] = {}
       end
@@ -174,7 +174,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
         else
           @log.debug "ERROR: Couldn't decode jabber error from server after join attempt: #{e.error}"
         end
-      ensure
+
+        @muc_objects.delete chan_name
         return
       end
 
