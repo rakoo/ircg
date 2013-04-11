@@ -141,7 +141,6 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
             # Make sure the next presence isn't treated as a join
             new_jid = old_jid
             new_jid.resource = new_nick
-
             @muc_objects[chan_name][:fake_joins] << new_jid
           end
         end
@@ -153,6 +152,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
       muc_client.add_join_callback(50) do |presence|
         jid = Jabber::JID.new presence.from
         if @muc_objects[chan_name][:fake_joins].include? jid
+          # If the remote user changed nick, we will see a join but we
+          # must not treat it as a real join, just silently swallow it.
           @muc_objects[chan_name][:fake_joins].delete jid
         else
           chan, prefix, _ = jabber_presence_to_irc presence
@@ -163,9 +164,22 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
       end
 
 
-      muc_client.join(real_jid)
+      begin
+        muc_client.join(real_jid)
+      rescue Jabber::ServerError => e
+        xmlError = e.error
+        if xmlError.error == 'conflict' && xmlError.type == :cancel
+          # Nick conflict
+          post server_name, ERR_NICKNAMEINUSE, @nick, "Nickname is already in use"
+        else
+          @log.debug "ERROR: Couldn't decode jabber error from server after join attempt: #{e.error}"
+        end
+      ensure
+        return
+      end
 
       # join success !
+      # TODO: send topic
       irc_nicks_and_roles = []
       muc_client.roster.each do |nick, presence|
         chan, prefix, irc_nick_and_role = jabber_presence_to_irc presence
