@@ -196,27 +196,30 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     end
 	end
 
-	def on_part(m)
-		channel, message = *m.params
+  def on_part(m); part_room(m) end
 
-		@@channels[channel.downcase][:users].each do |nick, f|
-			post @@users[nick][:socket], @prefix, PART, @@channels[channel.downcase][:alias], message
-		end
-		channel_part(channel)
-	end
+	def on_quit(m); part_room(m) end
 
-	def on_quit(m)
-		message = m.params[0]
-		@@channels.each do |channel, f|
-			if f[:users].key?(@nick.downcase)
-				channel_part(channel)
-				f[:users].each do |nick, m|
-					post @@users[nick][:socket], @prefix, QUIT, message
-				end
-			end
-		end
-		finish
-	end
+  ##
+  # Leave a room.
+  #
+  # This method will be used for both on_part and on_quit, since they
+  # are very similar.
+  def part_room(message)
+		channel, message = *message.params
+
+    if @muc_objects.keys.include? channel
+      # Part from jabber..
+      muc_client = @muc_objects[channel][:muc_client]
+      muc_client.exit message
+      @muc_objects.delete channel
+
+      # .. and announce it to IRC
+      post @prefix, PART, channel, message
+    else
+			post server_name, ERR_NOSUCHCHANNEL, channel, "No such nick/channel"
+    end
+  end
 
 	def on_disconnected
     raise
@@ -288,29 +291,6 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 		end
 	end
 
-	def channel_create(channel)
-		@@channels[channel.downcase] = {
-			:alias      => channel,
-			:topic      => "",
-			:mode       => default_channel_modes,
-			:users      => {@nick.downcase => ["@"]},
-		}
-	end
-
-	def channel_part(channel)
-		@@channels[channel.downcase][:users].delete(@nick.downcase)
-		channel_delete(channel.downcase) if @@channels[channel.downcase][:users].size == 0
-	end
-
-	def channel_part_all
-		@@channels.each do |c|
-			channel_part(c)
-		end
-	end
-
-	def channel_delete(channel)
-		@@channels.delete(channel.downcase)
-	end
 
 	def start_ping
 		Thread.start do

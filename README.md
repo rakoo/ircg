@@ -14,6 +14,8 @@ Basic functionality :
 - NICK
 - JOIN
 - PRIVMSG
+- PART
+- QUI
 
 in short, you can connect and join a room.
 
