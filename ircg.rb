@@ -264,10 +264,9 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 
 	def on_privmsg(m)
     target, message = *m.params
-    target.sub!(/^#/, '')
 
     if @muc_objects.keys.include? target
-      muc_client = @muc_objects[target]
+      muc_client = @muc_objects[target][:muc_client]
       muc_client.say message
     else
 			post server_name, ERR_NOSUCHNICK, @nick, target, "No such nick/channel"
