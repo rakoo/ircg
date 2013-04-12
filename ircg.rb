@@ -196,17 +196,8 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     end
 	end
 
-  def on_part(m); part_room(m) end
-
-	def on_quit(m); part_room(m) end
-
-  ##
-  # Leave a room.
-  #
-  # This method will be used for both on_part and on_quit, since they
-  # are very similar.
-  def part_room(message)
-		channel, message = *message.params
+  def on_part(m)
+    channel, message = *m.params
 
     if @muc_objects.keys.include? channel
       # Part from jabber..
@@ -221,20 +212,24 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
     end
   end
 
+	def on_quit(m)
+    quit
+  end
+
 	def on_disconnected
-    raise
-		super
-		@@channels.each do |channel, f|
-			if f[:users].key?(@nick.downcase)
-				channel_part(channel)
-				f[:users].each do |nick, m|
-					post @@users[nick][:socket], @prefix, QUIT, "disconnect"
-				end
-			end
-		end
-		channel_part_all
-		@@users.delete(@nick.downcase)
-	end
+    quit
+  end
+
+  ##
+  # Quit the muc.
+  #
+  # This will be used both for on_quit and on_disconnected
+  def quit
+    @muc_objects.each do |channame, objects|
+      objects[:muc_client].exit
+    end
+    @muc_objects.clear
+  end
 
 	def on_who(m)
 		channel = m.params[0]
