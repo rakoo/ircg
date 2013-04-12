@@ -232,35 +232,25 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
   end
 
 	def on_who(m)
-		channel = m.params[0]
-		return unless channel
+		target = m.params[0]
 
-		c = channel.downcase
-		case
-		when @@channels.key?(c)
-			@@channels[c][:users].each do |nickname, m|
-				nick = @@users[nickname][:nick]
-				user = @@users[nickname][:user]
-				host = @@users[nickname][:host]
-				real = @@users[nickname][:real]
-				case
-				when m.index("@")
-					f = "@"
-				when m.index("+")
-					f = "+"
-				else
-					f = ""
-				end
-				post @socket, server_name, RPL_WHOREPLY, @nick, @@channels[c][:alias], user, host, server_name, nick, "H#{f}", "0 #{real}"
-			end
-			post @socket, server_name, RPL_ENDOFWHO, @nick, @@channels[c][:alias], "End of /WHO list"
-		end
-	end
+    @muc_objects.each do |chan, muc_object|
 
-	def on_mode(m)
-	end
+      muc_object[:muc_client].roster.each do |nick, presence|
+        chan, prefix_str, irc_nick_and_role = jabber_presence_to_irc presence
+        role = /([@|+]?)([a-zA-Z0-9]+)/.match(irc_nick_and_role)[1]
+        prefix = Prefix.new prefix_str
 
-	def on_privmsg(m)
+        post server_name, RPL_WHOREPLY, chan, prefix.user, prefix.host, server_name, prefix.nick, "H#{role}", "0 #{presence.from}"
+      end
+      post server_name, RPL_ENDOFWHO, target, "End of /WHO list" if target
+    end
+  end
+
+  def on_mode(m)
+  end
+
+  def on_privmsg(m)
     target, message = *m.params
 
     if @muc_objects.keys.include? target

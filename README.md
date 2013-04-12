@@ -15,7 +15,8 @@ Basic functionality :
 - JOIN
 - PRIVMSG
 - PART
-- QUI
+- QUIT
+- WHO
 
 in short, you can connect and join a room.
 
