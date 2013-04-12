@@ -328,55 +328,17 @@ end
 
 
 if __FILE__ == $0
-	require "optparse"
+  require 'trollop'
 
-	opts = {
-		:port  => 6969,
-		:host  => "localhost",
-		:log   => nil,
-		:debug => false,
-		:foreground => false,
-	}
+  opts = Trollop::options do
+    opt :host, "host name or IP address to listen", :default => "localhost"
+    opt :port, "port number to listen", :default => 6969
+    opt :log, "log file", :type => :string
+    opt :debug, "Enable debug mode", :default => false
+    opt :foreground, "Run foreground", :default => false
+  end
 
-	OptionParser.new do |parser|
-		parser.instance_eval do
-			self.banner = <<-EOB.gsub(/^\t+/, "")
-				Usage: #{$0} [opts]
-
-			EOB
-
-			separator ""
-
-			separator "Options:"
-			on("-p", "--port [PORT=#{opts[:port]}]", "port number to listen") do |port|
-				opts[:port] = port
-			end
-
-			on("-h", "--host [HOST=#{opts[:host]}]", "host name or IP address to listen") do |host|
-				opts[:host] = host
-			end
-
-			on("-l", "--log LOG", "log file") do |log|
-				opts[:log] = log
-			end
-
-			on("--debug", "Enable debug mode") do |debug|
-				opts[:log]   = $stdout
-				opts[:debug] = true
-			end
-
-			on("-f", "--foreground", "run foreground") do |foreground|
-				opts[:log]        = $stdout
-				opts[:foreground] = true
-			end
-
-			on("-n", "--name [user name or email address]") do |name|
-				opts[:name] = name
-			end
-
-			parse!(ARGV)
-		end
-	end
+  opts[:log] = $stdout if opts[:debug] || opts[:foreground]
 
 	opts[:logger] = Logger.new(opts[:log], "daily")
 	opts[:logger].level = opts[:debug] ? Logger::DEBUG : Logger::INFO

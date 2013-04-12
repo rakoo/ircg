@@ -64,10 +64,11 @@ experimental, though
 
 - xmpp4r
 - net-irc
+- trollop
 
 # Install/run
 
-$ gem install xmpp4r net-irc
+$ gem install xmpp4r net-irc trollop
 $ ruby ircg.rb
 
 # License
