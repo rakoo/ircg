@@ -279,14 +279,6 @@ class NetIrcGatewayServer < Net::IRC::Server::Session
 		@ping = true
 	end
 
-	def idle_update
-		@updated_on = Time.now.to_i
-		if logged_in?
-			@@users[@nick.downcase][:updated_on] = @updated_on
-		end
-	end
-
-
 	def start_ping
 		Thread.start do
 			loop do
